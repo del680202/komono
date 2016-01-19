@@ -3,8 +3,6 @@
 package org.komono.sqlanalytics
 
 import collection.mutable.Stack
-
-import org.komono.sqlanalytics.SQlAnalyzerFactory;
 import org.scalatest.FunSuite
 
 class TestSQlAnalyzer extends FunSuite {
