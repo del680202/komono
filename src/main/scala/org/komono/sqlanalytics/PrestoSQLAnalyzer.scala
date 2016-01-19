@@ -23,6 +23,7 @@ import com.facebook.presto.sql.tree.Cast
 import com.facebook.presto.sql.tree.QualifiedNameReference
 import com.typesafe.scalalogging.slf4j.Logger
 import org.slf4j.LoggerFactory
+import com.facebook.presto.sql.tree.Union
 
 class PrestoSQLAnalyzer extends SQlAnalyzer {
 
@@ -31,52 +32,87 @@ class PrestoSQLAnalyzer extends SQlAnalyzer {
   override def analyzeCreateViewStatement(createViewStatment: String): CreateViewAnalysisResult = {
     val parser = new SqlParser()
     val createStatement: CreateView = parser.createStatement(createViewStatment).asInstanceOf[CreateView]
+    var result: CreateViewAnalysisResult = new CreateViewAnalysisResult(targetName = Some(createStatement.getName.toString))
     val query = createStatement.getQuery
-    val queryBody = query.getQueryBody.asInstanceOf[QuerySpecification]
-    var result:CreateViewAnalysisResult = new CreateViewAnalysisResult(targetName=Some(createStatement.getName.toString))
-    if (queryBody.getFrom().isPresent()) {
-      result.mergeAnalysisResult(buildAnalysisResult(queryBody.getFrom.get))
-    }
-    if(queryBody.getWhere.isPresent()){
-      result.addWhereKeys(parseExpression(queryBody.getWhere.get))
+    query.getQueryBody.getClass.getSimpleName match {
+      case "QuerySpecification" => {
+        handleQuerySpecification(result, query.getQueryBody)
+      }
+      case "Union" => {
+        val union = query.getQueryBody.asInstanceOf[Union]
+        for (relation <- union.getRelations.toArray()) {
+          result.mergeAnalysisResult(buildAnalysisResult(relation.asInstanceOf[Relation]))
+        }
+      }
     }
     result
   }
 
+  def handleQuerySpecification(result: CreateViewAnalysisResult, queryBodyRelation: Relation) {
+    val queryBody = queryBodyRelation.asInstanceOf[QuerySpecification]
+    if (queryBody.getFrom().isPresent()) {
+      result.mergeAnalysisResult(buildAnalysisResult(queryBody.getFrom.get))
+    }
+    if (queryBody.getWhere.isPresent()) {
+      result.addWhereKeys(parseExpression(queryBody.getWhere.get))
+    }
+  }
+
   def buildAnalysisResult(relation: Relation): CreateViewAnalysisResult = {
     var result = new CreateViewAnalysisResult
-    if (relation.isInstanceOf[AliasedRelation]) {
-      val aliasFrom = relation.asInstanceOf[AliasedRelation]
-      result.mergeAnalysisResult(buildAnalysisResult(aliasFrom.getRelation))
-    } else if (relation.isInstanceOf[TableSubquery]) {
-      val subQuery = relation.asInstanceOf[TableSubquery]
-      val queryBody = subQuery.getQuery.getQueryBody.asInstanceOf[QuerySpecification]
-      if (queryBody.getFrom.get.isInstanceOf[Table]) {
-        val table = queryBody.getFrom.get.asInstanceOf[Table]
+    relation.getClass.getSimpleName match {
+      case "AliasedRelation" => {
+        val aliasFrom = relation.asInstanceOf[AliasedRelation]
+        result.mergeAnalysisResult(buildAnalysisResult(aliasFrom.getRelation))
+      }
+      case "TableSubquery" => {
+        val query = relation.asInstanceOf[TableSubquery].getQuery
+        query.getQueryBody.getClass.getSimpleName match {
+          case "QuerySpecification" => {
+            val queryBody = query.getQueryBody.asInstanceOf[QuerySpecification]
+            if (queryBody.getFrom.get.isInstanceOf[Table]) {
+              val table = queryBody.getFrom.get.asInstanceOf[Table]
+              result.addTable(table.getName.toString())
+            } else {
+              result.mergeAnalysisResult(buildAnalysisResult(queryBody.getFrom.get))
+            }
+            val where = queryBody.getWhere
+            if (where.isPresent()) {
+              result.addWhereKeys(parseExpression(where.get))
+            }
+          }
+          case "Union" => {
+            val union = query.getQueryBody.asInstanceOf[Union]
+            for (relation <- union.getRelations.toArray()) {
+              result.mergeAnalysisResult(buildAnalysisResult(relation.asInstanceOf[Relation]))
+            }
+          }
+        }
+      }
+      case "Join" => {
+        val join = relation.asInstanceOf[Join]
+        if (join.getCriteria.isPresent()) {
+          result.addJoinKeys(parseExpression(join.getCriteria.get.asInstanceOf[JoinOn].getExpression))
+        }
+        result.mergeAnalysisResult(buildAnalysisResult(join.getLeft))
+        result.mergeAnalysisResult(buildAnalysisResult(join.getRight))
+      }
+      case "Table" => {
+        val table = relation.asInstanceOf[Table]
         result.addTable(table.getName.toString())
-      } else {
-        result.mergeAnalysisResult(buildAnalysisResult(subQuery.getQuery.getQueryBody.asInstanceOf[QuerySpecification].getFrom.get))
       }
-      val where = subQuery.getQuery.getQueryBody.asInstanceOf[QuerySpecification].getWhere
-      if (where.isPresent()) {
-        result.addWhereKeys(parseExpression(where.get))
+      case "Union" => {
+        println("QQ")
       }
-    } else if (relation.isInstanceOf[Join]) {
-      val join = relation.asInstanceOf[Join]
-      if (join.getCriteria.isPresent()) {
-        result.addJoinKeys(parseExpression(join.getCriteria.get.asInstanceOf[JoinOn].getExpression))
+      case "QuerySpecification" => {
+        handleQuerySpecification(result, relation)
       }
-      result.mergeAnalysisResult(buildAnalysisResult(join.getLeft))
-      result.mergeAnalysisResult(buildAnalysisResult(join.getRight))
-    }else if(relation.isInstanceOf[Table]){
-      val table = relation.asInstanceOf[Table]
-      result.addTable(table.getName.toString())
-    }else{
-      logger.debug(s"Unknown relation: ${relation.getClass.getSimpleName}")
+      case _ => {
+        logger.debug(s"Unknown relation: ${relation.getClass.getSimpleName}")
+      }
     }
     result
   }
-  
 
   /*
    * Build list of columns which are used in expression
@@ -100,10 +136,10 @@ class PrestoSQLAnalyzer extends SQlAnalyzer {
       result = result union parseExpression(op.getExpression)
     } else if (expression.isInstanceOf[QualifiedNameReference]) {
       val op = expression.asInstanceOf[QualifiedNameReference]
-      val name: String = if (op.getName == op.getSuffix) 
-                           op.getName.toString().replaceAll("\"", "")
-                         else 
-                           s"${op.getName.toString()}.${op.getSuffix.toString()}".replaceAll("\"", "")
+      val name: String = if (op.getName == op.getSuffix)
+        op.getName.toString().replaceAll("\"", "")
+      else
+        s"${op.getName.toString()}.${op.getSuffix.toString()}".replaceAll("\"", "")
       result = result union Set(name)
     } else {
       logger.debug(s"unknown expression=$expression, className=${expression.getClass.getSimpleName}")

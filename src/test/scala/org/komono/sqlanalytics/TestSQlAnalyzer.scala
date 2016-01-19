@@ -129,6 +129,39 @@ where
   cast(a.dt as bigint) >= 20150201
 """
 
+  val testcase7 = """create view union_test1
+as
+select
+        *
+from
+        hive.table1
+group by
+        dt
+union all
+select
+        *
+from
+         hive.table2
+group by
+        dt"""
+  
+  val testcase8 = """create view union_test2
+as
+SELECT A.* FROM (
+select
+        *
+from
+        hive.table1
+group by
+        dt
+union all
+select
+        *
+from
+         hive.table2
+group by
+        dt) A"""
+
   test("Test analyzing result of create statement") {
     val analyzer = SQlAnalyzerFactory.buildSQlAnalyzer("presto")
     var result = analyzer.analyzeCreateViewStatement(testcase1)
@@ -142,7 +175,7 @@ where
     assertResult(Set("item2"))(result.tables)
     assertResult(Set())(result.joinKeys)
     assertResult(Set("a"))(result.whereKeys)
-    
+
     result = analyzer.analyzeCreateViewStatement(testcase3)
     assertResult("v3")(result.targetName.get)
     assertResult(Set("item3", "item4"))(result.tables)
@@ -154,44 +187,56 @@ where
     assertResult(Set("table1", "table2", "table3"))(result.tables)
     assertResult(Set("a.copy_id", "b.copy_id", "b.seq_test_id", "c.seq_test_id"))(result.joinKeys)
     assertResult(Set("dt"))(result.whereKeys)
-    
+
     result = analyzer.analyzeCreateViewStatement(testcase5)
     assertResult("multijoin.test2")(result.targetName.get)
-    assertResult(Set("hive.table1", 
-                     "hive.table2", 
-                     "hive.table3",
-                     "hive.table4",
-                     "hive.table5"))(result.tables)
-    assertResult(Set("daily_summary_data.id1", 
-                     "t.yyyymmdd", 
-                     "weekly_data.yyyymmdd", 
-                     "meta_data.id2",
-                     "daily_summary_data.key1",
-                     "oa_stats2.dt",
-                     "d.dt",
-                     "oa_stats2.id1",
-                     "weekly_data.id2",
-                     "weekly_data.id1",
-                     "weekly_data.key1"))(result.joinKeys)
+    assertResult(Set("hive.table1",
+      "hive.table2",
+      "hive.table3",
+      "hive.table4",
+      "hive.table5"))(result.tables)
+    assertResult(Set("daily_summary_data.id1",
+      "t.yyyymmdd",
+      "weekly_data.yyyymmdd",
+      "meta_data.id2",
+      "daily_summary_data.key1",
+      "oa_stats2.dt",
+      "d.dt",
+      "oa_stats2.id1",
+      "weekly_data.id2",
+      "weekly_data.id1",
+      "weekly_data.key1"))(result.joinKeys)
     assertResult(Set())(result.whereKeys)
-    
+
     result = analyzer.analyzeCreateViewStatement(testcase5)
-    
+
     result = analyzer.analyzeCreateViewStatement(testcase6)
     assertResult("multijoin.test3")(result.targetName.get)
     assertResult(Set("hive.table1",
-                     "hive.table2",
-                     "hive.table3",
-                     "hive.table4"))(result.tables)
+      "hive.table2",
+      "hive.table3",
+      "hive.table4"))(result.tables)
     assertResult(Set("a.dt",
-                     "b.yyyymmdd",
-                     "message_account.dt",
-                     "post_account.dt",
-                     "message_or_post_account.dt"))(result.joinKeys)
+      "b.yyyymmdd",
+      "message_account.dt",
+      "post_account.dt",
+      "message_or_post_account.dt"))(result.joinKeys)
     assertResult(Set("message_or_post_flag",
-                     "via",
-                     "post_flag",
-                     "message_flag",
-                     "a.dt"))(result.whereKeys)
+      "via",
+      "post_flag",
+      "message_flag",
+      "a.dt"))(result.whereKeys)
+      
+    result = analyzer.analyzeCreateViewStatement(testcase7)
+    assertResult("union_test1")(result.targetName.get)
+    assertResult(Set("hive.table1", "hive.table2"))(result.tables)
+    assertResult(Set())(result.joinKeys)
+    assertResult(Set())(result.whereKeys)
+    
+    result = analyzer.analyzeCreateViewStatement(testcase8)
+    assertResult("union_test2")(result.targetName.get)
+    assertResult(Set("hive.table1", "hive.table2"))(result.tables)
+    assertResult(Set())(result.joinKeys)
+    assertResult(Set())(result.whereKeys)
   }
 }
