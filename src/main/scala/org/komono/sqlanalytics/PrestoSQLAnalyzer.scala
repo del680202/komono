@@ -24,6 +24,7 @@ import com.facebook.presto.sql.tree.QualifiedNameReference
 import com.typesafe.scalalogging.slf4j.Logger
 import org.slf4j.LoggerFactory
 import com.facebook.presto.sql.tree.Union
+import com.facebook.presto.sql.tree.BetweenPredicate
 
 class PrestoSQLAnalyzer extends SQlAnalyzer {
 
@@ -70,11 +71,13 @@ class PrestoSQLAnalyzer extends SQlAnalyzer {
         query.getQueryBody.getClass.getSimpleName match {
           case "QuerySpecification" => {
             val queryBody = query.getQueryBody.asInstanceOf[QuerySpecification]
-            if (queryBody.getFrom.get.isInstanceOf[Table]) {
-              val table = queryBody.getFrom.get.asInstanceOf[Table]
-              result.addTable(table.getName.toString())
-            } else {
-              result.mergeAnalysisResult(buildAnalysisResult(queryBody.getFrom.get))
+            if (queryBody.getFrom.isPresent()) {
+              if (queryBody.getFrom.get.isInstanceOf[Table]) {
+                val table = queryBody.getFrom.get.asInstanceOf[Table]
+                result.addTable(table.getName.toString())
+              } else {
+                result.mergeAnalysisResult(buildAnalysisResult(queryBody.getFrom.get))
+              }
             }
             val where = queryBody.getWhere
             if (where.isPresent()) {
@@ -102,7 +105,10 @@ class PrestoSQLAnalyzer extends SQlAnalyzer {
         result.addTable(table.getName.toString())
       }
       case "Union" => {
-        println("QQ")
+        val union = relation.asInstanceOf[Union]
+        for (relation <- union.getRelations.toArray()) {
+          result.mergeAnalysisResult(buildAnalysisResult(relation.asInstanceOf[Relation]))
+        }
       }
       case "QuerySpecification" => {
         handleQuerySpecification(result, relation)
@@ -141,7 +147,12 @@ class PrestoSQLAnalyzer extends SQlAnalyzer {
       else
         s"${op.getName.toString()}.${op.getSuffix.toString()}".replaceAll("\"", "")
       result = result union Set(name)
-    } else {
+    } else if (expression.isInstanceOf[BetweenPredicate]) {
+      val op = expression.asInstanceOf[BetweenPredicate]
+      result = result union parseExpression(op.getValue)
+      result = result union parseExpression(op.getMin)
+      result = result union parseExpression(op.getMax)
+    }else {
       logger.debug(s"unknown expression=$expression, className=${expression.getClass.getSimpleName}")
     }
     result

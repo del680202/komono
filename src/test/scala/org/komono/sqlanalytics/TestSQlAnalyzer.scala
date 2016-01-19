@@ -161,6 +161,35 @@ from
          hive.table2
 group by
         dt) A"""
+  
+  val testcase9 = """CREATE OR REPLACE VIEW union_test3
+AS
+SELECT
+    *
+FROM
+        (SELECT
+          *
+        FROM
+                (SELECT
+                  *
+                FROM
+                  (SELECT * FROM hive.table1 WHERE is_limit = false) a
+                CROSS JOIN
+                  hive.table2 b
+                ) dm
+        WHERE
+                dm.range between dm.min AND dm.max
+        UNION ALL
+        SELECT
+                *
+        FROM
+                (SELECT * FROM hive.table3 WHERE is_limit = true) a
+         )tmp
+UNION ALL
+SELECT * FROM
+    (SELECT DISTINCT d_type FROM hive.table4)
+CROSS JOIN
+    (SELECT 0 as d1, '0' as d2, '0' as key) a"""
 
   test("Test analyzing result of create statement") {
     val analyzer = SQlAnalyzerFactory.buildSQlAnalyzer("presto")
@@ -238,5 +267,11 @@ group by
     assertResult(Set("hive.table1", "hive.table2"))(result.tables)
     assertResult(Set())(result.joinKeys)
     assertResult(Set())(result.whereKeys)
+    
+    result = analyzer.analyzeCreateViewStatement(testcase9)
+    assertResult("union_test3")(result.targetName.get)
+    assertResult(Set("hive.table1", "hive.table2", "hive.table3", "hive.table4"))(result.tables)
+    assertResult(Set())(result.joinKeys)
+    assertResult(Set("is_limit", "dm.range", "dm.min", "dm.max"))(result.whereKeys)
   }
 }
